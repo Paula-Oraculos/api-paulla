@@ -130,4 +130,74 @@ router.post('/paulaoraculos', (req, res) => {
   }
 });
 
+// POST /webhook/greenn — compra aprovada na Greenn
+router.post('/greenn', (req, res) => {
+  try {
+    const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+
+    console.log('[Greenn webhook recebido]', JSON.stringify(body, null, 2));
+
+    // Extrai nome do produto (tenta várias estruturas possíveis da Greenn)
+    const nomeProduto =
+      body.product?.name ||
+      body.product_name ||
+      body.data?.product?.name ||
+      body.plan?.name ||
+      body.offer?.name ||
+      body.item?.name ||
+      'Produto Greenn';
+
+    // Extrai telefone do comprador
+    const rawPhone =
+      body.customer?.phone ||
+      body.customer?.cellphone ||
+      body.subscriber?.phone ||
+      body.data?.subscriber?.phone ||
+      body.data?.customer?.phone ||
+      body.phone ||
+      body.customer_phone;
+
+    if (!rawPhone) {
+      console.warn('[Greenn] Telefone não encontrado no payload');
+      return res.json({ success: false, error: 'Telefone não encontrado no payload' });
+    }
+
+    const phone = String(rawPhone).replace(/\D/g, '');
+
+    // Busca lead pelos últimos 8 dígitos do telefone (tolerante a DDI)
+    const suffix = phone.slice(-8);
+    const lead = db.prepare("SELECT * FROM leads WHERE whatsapp LIKE ?").get(`%${suffix}`);
+
+    if (!lead) {
+      console.warn(`[Greenn] Lead não encontrado para telefone: ${phone}`);
+      return res.json({ success: false, error: 'Lead não encontrado', phone });
+    }
+
+    // Adiciona o produto/curso à lista
+    let courses = [];
+    try { courses = JSON.parse(lead.courses || '[]'); } catch {}
+    if (!courses.includes(nomeProduto)) courses.push(nomeProduto);
+
+    // Salva no banco: cursos + move para convertidos
+    db.prepare(`
+      UPDATE leads
+      SET courses = ?, kanban_stage = 'convertidos', status = 'Convertido', updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(JSON.stringify(courses), lead.id);
+
+    // Notifica Paula
+    if (PAULA_WHATSAPP) {
+      enviarWhatsApp(
+        `${PAULA_WHATSAPP}@s.whatsapp.net`,
+        `💰 *VENDA CONFIRMADA — Greenn*\n\n👤 *Lead:* ${lead.nome}\n📱 *Whats:* ${lead.whatsapp}\n🎓 *Produto:* ${nomeProduto}\n\n✅ Lead movido automaticamente para *Convertidos*!`
+      );
+    }
+
+    res.json({ success: true, lead_id: lead.id, produto: nomeProduto, courses });
+  } catch (err) {
+    console.error('[Greenn webhook erro]', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 module.exports = router;

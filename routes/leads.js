@@ -20,7 +20,11 @@ router.get('/', (req, res) => {
   query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
   params.push(Number(limit), Number(offset));
 
-  const leads = db.prepare(query).all(...params);
+  const raw = db.prepare(query).all(...params);
+  const leads = raw.map(l => ({
+    ...l,
+    courses: (() => { try { return JSON.parse(l.courses || '[]'); } catch { return []; } })(),
+  }));
   const total = db.prepare('SELECT COUNT(*) as count FROM leads').get().count;
 
   res.json({ leads, total });
@@ -49,6 +53,29 @@ router.patch('/:id/status', (req, res) => {
   const { status } = req.body;
   db.prepare('UPDATE leads SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(status, req.params.id);
   res.json({ success: true });
+});
+
+// PATCH /leads/:id/stage — atualiza estágio do kanban
+router.patch('/:id/stage', (req, res) => {
+  const { stage } = req.body;
+  db.prepare('UPDATE leads SET kanban_stage = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(stage, req.params.id);
+  res.json({ success: true });
+});
+
+// PATCH /leads/:id/courses — adiciona ou remove curso
+router.patch('/:id/courses', (req, res) => {
+  const { action, course } = req.body; // action: 'add' | 'remove'
+  const lead = db.prepare('SELECT courses FROM leads WHERE id = ?').get(req.params.id);
+  if (!lead) return res.status(404).json({ error: 'Lead não encontrado' });
+
+  let courses = [];
+  try { courses = JSON.parse(lead.courses || '[]'); } catch {}
+
+  if (action === 'add' && !courses.includes(course)) courses.push(course);
+  if (action === 'remove') courses = courses.filter(c => c !== course);
+
+  db.prepare('UPDATE leads SET courses = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(JSON.stringify(courses), req.params.id);
+  res.json({ success: true, courses });
 });
 
 // GET /leads/fila — fila de cartas

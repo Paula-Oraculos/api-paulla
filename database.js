@@ -43,4 +43,13 @@ db.exec(`
   );
 `);
 
+// Migração: adiciona colunas novas sem quebrar banco existente
+const migrations = [
+  "ALTER TABLE leads ADD COLUMN courses TEXT DEFAULT '[]'",
+  "ALTER TABLE leads ADD COLUMN kanban_stage TEXT DEFAULT 'novos'",
+];
+migrations.forEach(sql => {
+  try { db.exec(sql); } catch {}
+});
+
 module.exports = db;
